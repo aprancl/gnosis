@@ -36,22 +36,22 @@ export interface ScenarioPromptData {
 export function buildSystemPrompt(data: ScenarioPromptData): string {
   const { scenario, chapter } = data;
 
-  const base = baseSystemPrompt(chapter.chapter_number);
+  const base = baseSystemPrompt(chapter.chapterNumber);
 
-  const preamble = scenarioSystemPreamble(scenario.system_prompt);
+  const preamble = scenarioSystemPreamble(scenario.systemPrompt);
 
   const context = scenarioContextSection({
     title: scenario.title,
-    contextDescription: scenario.context_description,
-    agentRole: scenario.agent_role,
-    chapterNumber: chapter.chapter_number,
+    contextDescription: scenario.contextDescription,
+    agentRole: scenario.agentRole,
+    chapterNumber: chapter.chapterNumber,
     chapterTitle: chapter.title,
   });
 
   const targets = learningTargetsSection({
-    targetVocabulary: chapter.target_vocabulary,
-    targetGrammar: chapter.target_grammar,
-    targetPhrases: scenario.target_phrases,
+    targetVocabulary: chapter.targetVocabulary,
+    targetGrammar: chapter.targetGrammar,
+    targetPhrases: scenario.targetPhrases,
   });
 
   return `${base}

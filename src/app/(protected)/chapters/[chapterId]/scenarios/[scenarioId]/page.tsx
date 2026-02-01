@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { db } from "@/server/db";
+import { getOrCreateUser } from "@/server/auth";
 import BrowserSupportNotice from "@/components/ui/BrowserSupportNotice";
 import ChatInterfaceLoader from "@/components/chat/ChatInterfaceLoader";
 import type { Scenario } from "@/types/database";
@@ -17,34 +18,25 @@ export default async function ScenarioPage({ params, searchParams }: ScenarioPag
   const { chapterId, scenarioId } = await params;
   const { replay } = await searchParams;
   const isReplay = replay === "1";
-  const supabase = await createClient();
 
-  // Fetch the scenario (select only columns needed by ChatInterface)
-  const { data: scenario, error } = await supabase
-    .from("scenarios")
-    .select("id, chapter_id, scenario_number, title, context_description, agent_role, target_phrases, system_prompt")
-    .eq("id", scenarioId)
-    .eq("chapter_id", chapterId)
-    .single();
+  // Fetch the scenario
+  const scenario = await db.scenario.findFirst({
+    where: { id: scenarioId, chapterId },
+  });
 
-  if (error || !scenario) {
+  if (!scenario) {
     notFound();
   }
 
-  // Cast to typed Scenario
-  const typedScenario = scenario as Scenario;
+  const typedScenario = scenario as unknown as Scenario;
 
   // If replaying, clear conversation history server-side
   if (isReplay) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getOrCreateUser();
     if (user) {
-      await supabase
-        .from("conversation_messages")
-        .delete()
-        .eq("user_id", user.id)
-        .eq("scenario_id", scenarioId);
+      await db.conversationMessage.deleteMany({
+        where: { userId: user.id, scenarioId },
+      });
     }
   }
 

@@ -450,7 +450,7 @@ export default function ScenarioReview({ data }: ScenarioReviewProps) {
             {scenario.title}
           </h2>
           <p className="mt-2 font-serif text-base text-blue-800/60">
-            {scenario.context_description}
+            {scenario.contextDescription}
           </p>
         </div>
 

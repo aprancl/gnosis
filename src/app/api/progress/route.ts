@@ -2,20 +2,16 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getOrCreateUser } from "@/server/auth";
 import { getOverallStats } from "@/lib/progress/tracker";
 
 /**
  * GET /api/progress
  *
- * Returns the current authenticated user's progress stats including
- * total completed scenarios, accuracy average, vocabulary count, and streak.
+ * Returns the current authenticated user's progress stats.
  */
 export async function GET() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getOrCreateUser();
 
   if (!user) {
     return NextResponse.json(
@@ -30,7 +26,6 @@ export async function GET() {
     { stats },
     {
       headers: {
-        // Progress data is user-specific; allow short-lived private cache
         "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
       },
     }

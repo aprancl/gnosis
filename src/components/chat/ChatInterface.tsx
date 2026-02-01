@@ -288,11 +288,11 @@ export default function ChatInterface({ scenario, isReplay = false }: ChatInterf
               {scenario.title}
             </h2>
             <p className="mt-1 font-serif text-sm leading-relaxed text-blue-700/70">
-              {scenario.context_description}
+              {scenario.contextDescription}
             </p>
-            {scenario.agent_role && (
+            {scenario.agentRole && (
               <p className="mt-1 font-serif text-xs italic text-blue-500">
-                Speaking with: {scenario.agent_role}
+                Speaking with: {scenario.agentRole}
               </p>
             )}
           </div>
@@ -335,8 +335,8 @@ export default function ChatInterface({ scenario, isReplay = false }: ChatInterf
                   : "Begin the conversation in Greek..."}
               </p>
               <p className="mt-2 font-serif text-sm text-blue-600/50">
-                {scenario.target_phrases.length > 0 && (
-                  <>Try using: {scenario.target_phrases.slice(0, 3).join(", ")}</>
+                {scenario.targetPhrases.length > 0 && (
+                  <>Try using: {scenario.targetPhrases.slice(0, 3).join(", ")}</>
                 )}
               </p>
             </div>
@@ -513,7 +513,7 @@ function CompletionOverlay({
           <button
             onClick={() => {
               // Replay: navigate to same scenario with replay flag
-              window.location.href = `/chapters/${scenario.chapter_id}/scenarios/${scenario.id}?replay=1`;
+              window.location.href = `/chapters/${scenario.chapterId}/scenarios/${scenario.id}?replay=1`;
             }}
             className="w-full rounded-lg border border-blue-200 bg-white px-4 py-3 font-serif text-sm font-semibold text-blue-800 transition-colors hover:bg-blue-50"
           >

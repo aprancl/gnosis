@@ -19,13 +19,11 @@ import {
   advanceUserProgress,
 } from "@/lib/scenario/completion";
 import { buildFallbackSystemPrompt } from "@/lib/scenario/prompts";
-import { createClient } from "@/lib/supabase/server";
+import { getOrCreateUser } from "@/server/auth";
 import { saveMessage } from "@/lib/conversation/storage";
 import { parseCorrections } from "@/lib/corrections/parser";
 import type { ChatRequest, ChatErrorResponse } from "@/types/chat";
 import type { CorrectionsData } from "@/types/corrections";
-
-// TODO: Add rate limiting headers (X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset)
 
 /**
  * Validate that the request body contains a valid ChatRequest.
@@ -38,7 +36,6 @@ function validateChatRequest(
   if (!Array.isArray(obj.messages)) return false;
   if (obj.messages.length === 0) return false;
 
-  // Validate optional scenarioId
   if (obj.scenarioId !== undefined && typeof obj.scenarioId !== "string") {
     return false;
   }
@@ -75,11 +72,8 @@ export async function POST(request: NextRequest) {
     const acceptStream =
       request.headers.get("accept") === "text/event-stream";
 
-    // Get authenticated user (needed for saving messages to conversation history)
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    // Get authenticated user
+    const user = await getOrCreateUser();
 
     // --- Scenario-aware path ---
     if (scenarioId) {
@@ -93,34 +87,28 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(error, { status: 404 });
       }
 
-      // Filter out any client-sent system messages to prevent prompt injection;
-      // the engine will prepend the authoritative system prompt.
+      // Filter out any client-sent system messages to prevent prompt injection
       const conversationMessages = messages.filter((m) => m.role !== "system");
 
-      // Save the latest user message to the database (the last message is always the new user message)
+      // Save the latest user message to the database
       const latestUserMessage = conversationMessages[conversationMessages.length - 1];
       if (user && latestUserMessage && latestUserMessage.role === "user") {
         await saveMessage(user.id, scenarioId, "user", latestUserMessage.content);
       }
 
       if (acceptStream) {
-        // For streaming, we prepend the system prompt and use the raw streaming client
         const fullMessages = [
           { role: "system" as const, content: scenarioContext.systemPrompt },
           ...conversationMessages,
         ];
         const stream = await createStreamingChatCompletion(fullMessages);
 
-        // For streaming responses, we save the assistant message via a TransformStream
-        // that collects the full response and saves it when the stream ends.
-        // We also detect completion markers and append metadata at the end.
         const { readable, writable } = new TransformStream();
         const writer = writable.getWriter();
         const reader = stream.getReader();
         const userId = user?.id;
         const currentScenarioContext = scenarioContext;
 
-        // Process in the background - pipe stream through and save on completion
         (async () => {
           let accumulated = "";
           const decoder = new TextDecoder();
@@ -132,20 +120,17 @@ export async function POST(request: NextRequest) {
               await writer.write(value);
             }
           } finally {
-            // Check for scenario completion in the accumulated response
             const completed = detectCompletion(accumulated);
             const cleanContent = completed
               ? stripCompletionMarker(accumulated)
               : accumulated;
 
-            // Extract corrections from the assistant response
             const correctionResult = parseCorrections(cleanContent);
             const correctionsData: CorrectionsData | null =
               correctionResult.corrections.length > 0
                 ? { corrections: correctionResult.corrections }
                 : null;
 
-            // Save assistant response after stream completes (with corrections)
             if (userId && cleanContent) {
               await saveMessage(
                 userId,
@@ -156,26 +141,23 @@ export async function POST(request: NextRequest) {
               );
             }
 
-            // Handle completion logic
             if (completed && userId) {
               await markScenarioComplete(userId, scenarioId);
-              // Check chapter completion and advance if needed
               await advanceUserProgress(
                 userId,
-                currentScenarioContext.scenario.chapter_id
+                currentScenarioContext.scenario.chapterId
               );
             }
 
-            // Send completion metadata as a final JSON chunk after the stream
             if (completed) {
               const nextScenario = await getNextScenario(
-                currentScenarioContext.scenario.chapter_id,
-                currentScenarioContext.scenario.scenario_number
+                currentScenarioContext.scenario.chapterId,
+                currentScenarioContext.scenario.scenarioNumber
               );
               const chapterDone = userId
                 ? await checkChapterComplete(
                     userId,
-                    currentScenarioContext.scenario.chapter_id
+                    currentScenarioContext.scenario.chapterId
                   )
                 : false;
 
@@ -187,8 +169,8 @@ export async function POST(request: NextRequest) {
                   ? {
                       id: nextScenario.id,
                       title: nextScenario.title,
-                      chapterId: nextScenario.chapter_id,
-                      scenarioNumber: nextScenario.scenario_number,
+                      chapterId: nextScenario.chapterId,
+                      scenarioNumber: nextScenario.scenarioNumber,
                     }
                   : undefined,
               };
@@ -212,20 +194,18 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Non-streaming scenario path: use the engine to process the turn
+      // Non-streaming scenario path
       const turnResult = await processConversationTurn(
         scenarioContext.systemPrompt,
         conversationMessages
       );
 
-      // Extract corrections from the assistant response
       const correctionResult = parseCorrections(turnResult.assistantMessage);
       const correctionsPayload: CorrectionsData | null =
         correctionResult.corrections.length > 0
           ? { corrections: correctionResult.corrections }
           : null;
 
-      // Save assistant response to the database (with corrections)
       if (user) {
         await saveMessage(
           user.id,
@@ -236,38 +216,35 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Handle scenario completion
       let chapterCompleted = false;
       let nextScenarioInfo = undefined;
 
       if (turnResult.scenarioCompleted && user) {
         await markScenarioComplete(user.id, scenarioId);
 
-        // Check if chapter is done and advance user
         chapterCompleted = await checkChapterComplete(
           user.id,
-          scenarioContext.scenario.chapter_id
+          scenarioContext.scenario.chapterId
         );
 
         if (chapterCompleted) {
           await advanceUserProgress(
             user.id,
-            scenarioContext.scenario.chapter_id
+            scenarioContext.scenario.chapterId
           );
         }
 
-        // Get next scenario info
         const nextScenario = await getNextScenario(
-          scenarioContext.scenario.chapter_id,
-          scenarioContext.scenario.scenario_number
+          scenarioContext.scenario.chapterId,
+          scenarioContext.scenario.scenarioNumber
         );
 
         if (nextScenario) {
           nextScenarioInfo = {
             id: nextScenario.id,
             title: nextScenario.title,
-            chapterId: nextScenario.chapter_id,
-            scenarioNumber: nextScenario.scenario_number,
+            chapterId: nextScenario.chapterId,
+            scenarioNumber: nextScenario.scenarioNumber,
           };
         }
       }
@@ -296,8 +273,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Non-streaming generic response
-    // If no system message is present, prepend a fallback system prompt
     const hasSystemMessage = messages.some((m) => m.role === "system");
     const finalMessages = hasSystemMessage
       ? messages
@@ -320,7 +295,6 @@ export async function POST(request: NextRequest) {
       code: "INTERNAL_ERROR",
     };
 
-    // Handle Groq API-specific errors
     if (error instanceof Error) {
       if (error.message.includes("401") || error.message.includes("Unauthorized")) {
         errorResponse.error = "Authentication failed with the AI provider.";

@@ -13,12 +13,12 @@ import type { Chapter, Scenario } from "@/types/database";
 function makeChapter(overrides?: Partial<Chapter>): Chapter {
   return {
     id: "ch-001",
-    chapter_number: 1,
+    chapterNumber: 1,
     title: "Greetings and the Marketplace",
     description: "Learn basic greetings in Koine Greek",
-    target_vocabulary: ["agora", "artos", "chaire"],
-    target_grammar: ["nominative case", "present tense"],
-    created_at: "2025-01-01T00:00:00Z",
+    targetVocabulary: ["agora", "artos", "chaire"],
+    targetGrammar: ["nominative case", "present tense"],
+    createdAt: new Date("2025-01-01T00:00:00Z"),
     ...overrides,
   };
 }
@@ -26,14 +26,14 @@ function makeChapter(overrides?: Partial<Chapter>): Chapter {
 function makeScenario(overrides?: Partial<Scenario>): Scenario {
   return {
     id: "sc-001",
-    chapter_id: "ch-001",
-    scenario_number: 1,
+    chapterId: "ch-001",
+    scenarioNumber: 1,
     title: "Meeting the Merchant",
-    context_description: "You are at the agora in ancient Athens.",
-    agent_role: "A friendly merchant selling bread and olives.",
-    target_phrases: ["Chaire!", "Ti poleis?"],
-    system_prompt: "You are Nikolaos, a bread merchant at the agora.",
-    created_at: "2025-01-01T00:00:00Z",
+    contextDescription: "You are at the agora in ancient Athens.",
+    agentRole: "A friendly merchant selling bread and olives.",
+    targetPhrases: ["Chaire!", "Ti poleis?"],
+    systemPrompt: "You are Nikolaos, a bread merchant at the agora.",
+    createdAt: new Date("2025-01-01T00:00:00Z"),
     ...overrides,
   };
 }
@@ -65,7 +65,7 @@ describe("buildSystemPrompt", () => {
   it("includes the chapter number and level", () => {
     const prompt = buildSystemPrompt({
       scenario: makeScenario(),
-      chapter: makeChapter({ chapter_number: 1 }),
+      chapter: makeChapter({ chapterNumber: 1 }),
     });
     expect(prompt).toContain("Chapter 1");
     expect(prompt).toContain("Beginner");
@@ -120,25 +120,25 @@ describe("buildSystemPrompt", () => {
   it("adjusts level description based on chapter number", () => {
     const beginner = buildSystemPrompt({
       scenario: makeScenario(),
-      chapter: makeChapter({ chapter_number: 1 }),
+      chapter: makeChapter({ chapterNumber: 1 }),
     });
     expect(beginner).toContain("Beginner");
 
     const elementary = buildSystemPrompt({
       scenario: makeScenario(),
-      chapter: makeChapter({ chapter_number: 3 }),
+      chapter: makeChapter({ chapterNumber: 3 }),
     });
     expect(elementary).toContain("Elementary");
 
     const intermediate = buildSystemPrompt({
       scenario: makeScenario(),
-      chapter: makeChapter({ chapter_number: 5 }),
+      chapter: makeChapter({ chapterNumber: 5 }),
     });
     expect(intermediate).toContain("Intermediate");
 
     const upper = buildSystemPrompt({
       scenario: makeScenario(),
-      chapter: makeChapter({ chapter_number: 7 }),
+      chapter: makeChapter({ chapterNumber: 7 }),
     });
     expect(upper).toContain("Upper Intermediate");
   });
@@ -153,8 +153,8 @@ describe("buildSystemPrompt", () => {
 
   it("handles empty target arrays gracefully", () => {
     const prompt = buildSystemPrompt({
-      scenario: makeScenario({ target_phrases: [] }),
-      chapter: makeChapter({ target_vocabulary: [], target_grammar: [] }),
+      scenario: makeScenario({ targetPhrases: [] }),
+      chapter: makeChapter({ targetVocabulary: [], targetGrammar: [] }),
     });
     expect(prompt).toContain("No specific vocabulary targets");
     expect(prompt).toContain("No specific grammar targets");

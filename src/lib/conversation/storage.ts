@@ -1,25 +1,16 @@
 /**
  * Conversation history storage and retrieval.
  *
- * Provides functions for persisting conversation messages to the Supabase
- * conversation_messages table and retrieving them for display or replay.
+ * Provides functions for persisting conversation messages to the database
+ * and retrieving them for display or replay.
  */
 
-import { createClient } from "@/lib/supabase/server";
-import type {
-  ConversationMessage,
-  ConversationMessageInsert,
-} from "@/types/database";
+import { db } from "@/server/db";
+import { Prisma } from "@prisma/client";
+import type { ConversationMessage } from "@/types/database";
 
 /**
  * Save a single message to the conversation_messages table.
- *
- * @param userId - The authenticated user's UUID
- * @param scenarioId - The scenario UUID this message belongs to
- * @param role - "user" or "assistant"
- * @param content - The message text
- * @param corrections - Optional corrections data (for assistant feedback)
- * @returns The saved message row, or null on error
  */
 export async function saveMessage(
   userId: string,
@@ -28,87 +19,64 @@ export async function saveMessage(
   content: string,
   corrections?: Record<string, unknown> | null
 ): Promise<ConversationMessage | null> {
-  const supabase = await createClient();
-
-  const insert: ConversationMessageInsert = {
-    user_id: userId,
-    scenario_id: scenarioId,
-    role,
-    content,
-    corrections: corrections ?? null,
-  };
-
-  const { data, error } = await supabase
-    .from("conversation_messages")
-    .insert(insert)
-    .select()
-    .single();
-
-  if (error) {
-    console.error("[conversation/storage] Failed to save message:", error.message);
+  try {
+    const message = await db.conversationMessage.create({
+      data: {
+        userId,
+        scenarioId,
+        role,
+        content,
+        corrections: corrections
+          ? (corrections as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+      },
+    });
+    return message as unknown as ConversationMessage;
+  } catch (error) {
+    console.error("[conversation/storage] Failed to save message:", error);
     return null;
   }
-
-  return data as unknown as ConversationMessage;
 }
 
 /**
- * Retrieve all messages for a user/scenario pair, ordered by created_at ascending.
- *
- * @param userId - The authenticated user's UUID
- * @param scenarioId - The scenario UUID
- * @returns Array of conversation messages ordered chronologically, or empty array on error
+ * Retrieve all messages for a user/scenario pair, ordered chronologically.
  */
 export async function getConversationHistory(
   userId: string,
   scenarioId: string
 ): Promise<ConversationMessage[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("conversation_messages")
-    .select("id, role, content, corrections, created_at")
-    .eq("user_id", userId)
-    .eq("scenario_id", scenarioId)
-    .order("created_at", { ascending: true });
-
-  if (error) {
+  try {
+    const messages = await db.conversationMessage.findMany({
+      where: { userId, scenarioId },
+      orderBy: { createdAt: "asc" },
+    });
+    return messages as unknown as ConversationMessage[];
+  } catch (error) {
     console.error(
       "[conversation/storage] Failed to load conversation history:",
-      error.message
+      error
     );
     return [];
   }
-
-  return (data ?? []) as unknown as ConversationMessage[];
 }
 
 /**
  * Delete all messages for a user/scenario pair (for scenario replay).
- *
- * @param userId - The authenticated user's UUID
- * @param scenarioId - The scenario UUID
- * @returns True if deletion succeeded (or no rows to delete), false on error
  */
 export async function clearConversation(
   userId: string,
   scenarioId: string
 ): Promise<boolean> {
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("conversation_messages")
-    .delete()
-    .eq("user_id", userId)
-    .eq("scenario_id", scenarioId);
-
-  if (error) {
+  try {
+    await db.conversationMessage.deleteMany({
+      where: { userId, scenarioId },
+    });
+    return true;
+  } catch (error) {
     console.error(
       "[conversation/storage] Failed to clear conversation:",
-      error.message
+      error
     );
     return false;
   }
-
-  return true;
 }

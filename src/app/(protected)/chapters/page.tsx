@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import { signOut } from "@/app/(auth)/actions";
+import { currentUser } from "@clerk/nextjs/server";
+import { UserButton } from "@clerk/nextjs";
+import { getOrCreateUser } from "@/server/auth";
+import { db } from "@/server/db";
 import ChapterCard from "@/components/ChapterCard";
-import type { Chapter, Scenario, UserProgress } from "@/types/database";
+import type { Chapter, Scenario } from "@/types/database";
+import { redirect } from "next/navigation";
 
 export const metadata = {
   title: "Chapters - Gnosis",
@@ -11,11 +14,6 @@ export const metadata = {
 
 /**
  * Determines which chapters are unlocked based on user progress.
- *
- * Rules:
- * - Chapter 1 is always unlocked.
- * - A subsequent chapter is unlocked if ALL scenarios in the previous chapter
- *   (by chapter_number order) are completed.
  */
 function computeUnlockedChapters(
   chapters: Chapter[],
@@ -24,22 +22,18 @@ function computeUnlockedChapters(
 ): Set<string> {
   const unlocked = new Set<string>();
 
-  // Chapters should already be sorted by chapter_number
   for (let i = 0; i < chapters.length; i++) {
     const chapter = chapters[i];
 
     if (i === 0) {
-      // First chapter is always unlocked
       unlocked.add(chapter.id);
       continue;
     }
 
-    // Check if all scenarios in the previous chapter are completed
     const prevChapter = chapters[i - 1];
     const prevScenarios = scenariosByChapter.get(prevChapter.id) ?? [];
 
     if (prevScenarios.length === 0) {
-      // If previous chapter has no scenarios, consider it complete
       unlocked.add(chapter.id);
       continue;
     }
@@ -57,57 +51,44 @@ function computeUnlockedChapters(
 }
 
 export default async function ChaptersPage() {
-  const supabase = await createClient();
+  const clerkUser = await currentUser();
+  if (!clerkUser) redirect("/sign-in");
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getOrCreateUser();
+  if (!user) redirect("/sign-in");
 
-  // Fetch chapters ordered by chapter_number (select only needed columns)
-  const { data: chapters, error: chaptersError } = await supabase
-    .from("chapters")
-    .select("id, chapter_number, title, description")
-    .order("chapter_number", { ascending: true });
-
-  // Fetch all scenarios to compute counts per chapter (select only needed columns)
-  const { data: scenarios, error: scenariosError } = await supabase
-    .from("scenarios")
-    .select("id, chapter_id, scenario_number");
-
-  // Fetch user progress (only completed scenarios, select only needed columns)
-  const { data: progress, error: progressError } = await supabase
-    .from("user_progress")
-    .select("scenario_id")
-    .eq("user_id", user!.id)
-    .eq("completed", true);
-
-  const hasError = chaptersError || scenariosError || progressError;
+  // Fetch data in parallel
+  const [chapters, scenarios, progress] = await Promise.all([
+    db.chapter.findMany({ orderBy: { chapterNumber: "asc" } }),
+    db.scenario.findMany({ select: { id: true, chapterId: true, scenarioNumber: true } }),
+    db.userProgress.findMany({
+      where: { userId: user.id, completed: true },
+      select: { scenarioId: true },
+    }),
+  ]);
 
   // Organize scenarios by chapter
   const scenariosByChapter = new Map<string, Scenario[]>();
-  if (scenarios) {
-    for (const scenario of scenarios as Scenario[]) {
-      const existing = scenariosByChapter.get(scenario.chapter_id) ?? [];
-      existing.push(scenario);
-      scenariosByChapter.set(scenario.chapter_id, existing);
-    }
+  for (const scenario of scenarios) {
+    const existing = scenariosByChapter.get(scenario.chapterId) ?? [];
+    existing.push(scenario as unknown as Scenario);
+    scenariosByChapter.set(scenario.chapterId, existing);
   }
 
   // Build set of completed scenario IDs
   const completedScenarioIds = new Set<string>();
-  if (progress) {
-    for (const p of progress as UserProgress[]) {
-      completedScenarioIds.add(p.scenario_id);
-    }
+  for (const p of progress) {
+    completedScenarioIds.add(p.scenarioId);
   }
 
-  // Compute which chapters are unlocked
-  const typedChapters = (chapters ?? []) as Chapter[];
+  const typedChapters = chapters as unknown as Chapter[];
   const unlockedChapterIds = computeUnlockedChapters(
     typedChapters,
     scenariosByChapter,
     completedScenarioIds
   );
+
+  const email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
 
   return (
     <div className="flex min-h-screen flex-col bg-parchment">
@@ -122,23 +103,15 @@ export default async function ChaptersPage() {
           </Link>
           <div className="flex items-center gap-4">
             <span className="font-serif text-sm text-blue-800/60">
-              {user?.email}
+              {email}
             </span>
-            <form>
-              <button
-                formAction={signOut}
-                className="rounded-lg border border-blue-200 bg-white px-4 py-2 font-serif text-sm text-blue-700 transition-colors hover:bg-blue-50"
-              >
-                Sign Out
-              </button>
-            </form>
+            <UserButton />
           </div>
         </div>
       </header>
 
       {/* Main content */}
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-12">
-        {/* Page title */}
         <div className="mb-10 text-center">
           <h2 className="font-serif text-4xl font-bold text-blue-900">
             Chapters
@@ -148,15 +121,7 @@ export default async function ChaptersPage() {
           </p>
         </div>
 
-        {/* Error state */}
-        {hasError && (
-          <div className="mb-8 rounded-lg border border-red-200 bg-red-50 p-4 text-center font-serif text-red-700">
-            There was an error loading your chapters. Please try again later.
-          </div>
-        )}
-
-        {/* Empty state */}
-        {!hasError && typedChapters.length === 0 && (
+        {typedChapters.length === 0 && (
           <div className="rounded-xl border-2 border-dashed border-blue-200 p-12 text-center">
             <p className="font-serif text-lg text-blue-800/60">
               No chapters have been added yet. Check back soon.
@@ -164,7 +129,6 @@ export default async function ChaptersPage() {
           </div>
         )}
 
-        {/* Chapter grid */}
         {typedChapters.length > 0 && (
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {typedChapters.map((chapter) => {
@@ -174,9 +138,8 @@ export default async function ChaptersPage() {
                 completedScenarioIds.has(s.id)
               ).length;
 
-              // Sort scenarios by scenario_number to find the first one
               const sortedScenarios = [...chapterScenarios].sort(
-                (a, b) => a.scenario_number - b.scenario_number
+                (a, b) => a.scenarioNumber - b.scenarioNumber
               );
 
               return (

@@ -43,7 +43,7 @@ export default function ChapterCard({
                 : "bg-blue-50 text-blue-300"
           }`}
         >
-          {chapter.chapter_number}
+          {chapter.chapterNumber}
         </span>
 
         {/* Lock / unlock / complete indicator */}

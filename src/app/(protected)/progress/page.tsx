@@ -1,53 +1,48 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getOrCreateUser } from "@/server/auth";
+import { db } from "@/server/db";
 import {
   getOverallStats,
   getUserProgress,
 } from "@/lib/progress/tracker";
-import type {
-  Chapter,
-  Scenario,
-  UserProgress,
-} from "@/types/database";
+import type { Chapter, Scenario } from "@/types/database";
 import ProgressChart from "@/components/progress/ProgressChart";
 import StreakCalendar from "@/components/progress/StreakCalendar";
 import VocabularyList from "@/components/progress/VocabularyList";
+import { redirect } from "next/navigation";
 
 export default async function ProgressPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getOrCreateUser();
+  if (!user) redirect("/sign-in");
 
   // Fetch data in parallel
-  const [stats, allProgress, chaptersResult, scenariosResult] =
-    await Promise.all([
-      getOverallStats(user!.id),
-      getUserProgress(user!.id),
-      supabase.from("chapters").select("*").order("chapter_number"),
-      supabase.from("scenarios").select("*").order("scenario_number"),
-    ]);
+  const [stats, allProgress, chapters, scenarios] = await Promise.all([
+    getOverallStats(user.id),
+    getUserProgress(user.id),
+    db.chapter.findMany({ orderBy: { chapterNumber: "asc" } }),
+    db.scenario.findMany({ orderBy: { scenarioNumber: "asc" } }),
+  ]);
 
-  const chapters = (chaptersResult.data ?? []) as unknown as Chapter[];
-  const scenarios = (scenariosResult.data ?? []) as unknown as Scenario[];
+  const typedChapters = chapters as unknown as Chapter[];
+  const typedScenarios = scenarios as unknown as Scenario[];
 
   // ── Build accuracy data points for chart ───────────────────────────────
   const completedWithDates = allProgress
-    .filter((p) => p.completed && p.completed_at && p.accuracy_score !== null)
+    .filter((p) => p.completed && p.completedAt && p.accuracyScore !== null)
     .sort(
       (a, b) =>
-        new Date(a.completed_at!).getTime() - new Date(b.completed_at!).getTime()
+        new Date(a.completedAt!).getTime() - new Date(b.completedAt!).getTime()
     );
 
   const accuracyDataPoints = completedWithDates.map((p) => {
-    const date = new Date(p.completed_at!);
+    const date = new Date(p.completedAt!);
     return {
       label: date.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
       }),
-      value: Math.round((p.accuracy_score ?? 0) * 100),
-      date: p.completed_at!,
+      value: Math.round((p.accuracyScore ?? 0) * 100),
+      date: p.completedAt!.toISOString(),
     };
   });
 
@@ -55,9 +50,9 @@ export default async function ProgressPage() {
   const activeDays = [
     ...new Set(
       allProgress
-        .filter((p) => p.completed && p.completed_at)
+        .filter((p) => p.completed && p.completedAt)
         .map((p) => {
-          const d = new Date(p.completed_at!);
+          const d = new Date(p.completedAt!);
           return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
         })
     ),
@@ -66,8 +61,9 @@ export default async function ProgressPage() {
   // ── Build vocabulary list with counts ──────────────────────────────────
   const vocabCounts = new Map<string, number>();
   for (const p of allProgress) {
-    if (p.vocabulary_used) {
-      for (const word of p.vocabulary_used) {
+    const vocab = p.vocabularyUsed as string[] | null;
+    if (vocab) {
+      for (const word of vocab) {
         vocabCounts.set(word, (vocabCounts.get(word) ?? 0) + 1);
       }
     }
@@ -77,12 +73,12 @@ export default async function ProgressPage() {
   );
 
   // ── Build chapter completion data ──────────────────────────────────────
-  const chapterCompletionData = chapters.map((chapter) => {
-    const chapterScenarios = scenarios.filter(
-      (s) => s.chapter_id === chapter.id
+  const chapterCompletionData = typedChapters.map((chapter) => {
+    const chapterScenarios = typedScenarios.filter(
+      (s) => s.chapterId === chapter.id
     );
     const completedScenarios = chapterScenarios.filter((s) =>
-      allProgress.some((p) => p.scenario_id === s.id && p.completed)
+      allProgress.some((p) => p.scenarioId === s.id && p.completed)
     );
     return {
       chapter,
@@ -93,11 +89,10 @@ export default async function ProgressPage() {
   });
 
   // ── Build grammar concepts practiced ───────────────────────────────────
-  // Collect target_grammar from chapters where user has completed at least one scenario
   const practicedGrammar: string[] = [];
   for (const chapterData of chapterCompletionData) {
     if (chapterData.completedScenarios > 0) {
-      for (const concept of chapterData.chapter.target_grammar) {
+      for (const concept of chapterData.chapter.targetGrammar) {
         if (!practicedGrammar.includes(concept)) {
           practicedGrammar.push(concept);
         }
@@ -126,7 +121,6 @@ export default async function ProgressPage() {
 
       {/* Main content */}
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
-        {/* Page title */}
         <div className="mb-8">
           <h2 className="font-serif text-4xl font-bold text-blue-900">
             Your Progress
@@ -165,10 +159,7 @@ export default async function ProgressPage() {
 
         {/* Charts section */}
         <div className="space-y-6 mb-8">
-          {/* Accuracy trend chart */}
           <ProgressChart dataPoints={accuracyDataPoints} title="Accuracy Trend" />
-
-          {/* Streak calendar */}
           <StreakCalendar activeDays={activeDays} streak={stats.streak} />
         </div>
 
@@ -182,7 +173,6 @@ export default async function ProgressPage() {
               <div className="space-y-3">
                 {chapterCompletionData.map(({ chapter, totalScenarios, completedScenarios, isComplete }) => (
                   <div key={chapter.id} className="flex items-center gap-4">
-                    {/* Chapter status icon */}
                     <div
                       className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${
                         isComplete
@@ -196,22 +186,20 @@ export default async function ProgressPage() {
                         <CheckIcon />
                       ) : (
                         <span className="font-sans text-xs font-bold">
-                          {chapter.chapter_number}
+                          {chapter.chapterNumber}
                         </span>
                       )}
                     </div>
 
-                    {/* Chapter info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline justify-between gap-2">
                         <p className="font-serif text-sm font-semibold text-blue-900 truncate">
-                          Ch. {chapter.chapter_number}: {chapter.title}
+                          Ch. {chapter.chapterNumber}: {chapter.title}
                         </p>
                         <span className="flex-shrink-0 font-sans text-xs text-blue-800/50">
                           {completedScenarios}/{totalScenarios}
                         </span>
                       </div>
-                      {/* Progress bar */}
                       <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-blue-100">
                         <div
                           className={`h-full rounded-full transition-all ${

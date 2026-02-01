@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+model User {
+  id               String   @id @default(cuid())
+  clerkId          String   @unique
+  email            String   @unique
+  currentChapterId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  progress       UserProgress[]
+  messages       ConversationMessage[]
+  currentChapter Chapter?              @relation(fields: [currentChapterId], references: [id])
+
+  @@index([clerkId])
+}
+
+model Chapter {
+  id               String   @id @default(cuid())
+  chapterNumber    Int      @unique
+  title            String
+  description      String
+  targetVocabulary Json     @default("[]")
+  targetGrammar    Json     @default("[]")
+  createdAt        DateTime @default(now())
+
+  scenarios Scenario[]
+  users     User[]
+
+  @@index([chapterNumber])
+}
+
+model Scenario {
+  id                 String   @id @default(cuid())
+  chapterId          String
+  scenarioNumber     Int
+  title              String
+  contextDescription String   @db.Text
+  agentRole          String   @db.Text
+  targetPhrases      Json     @default("[]")
+  systemPrompt       String   @db.Text
+  createdAt          DateTime @default(now())
+
+  chapter  Chapter              @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  progress UserProgress[]
+  messages ConversationMessage[]
+
+  @@unique([chapterId, scenarioNumber])
+  @@index([chapterId, scenarioNumber])
+}
+
+model UserProgress {
+  id             String    @id @default(cuid())
+  userId         String
+  scenarioId     String
+  completed      Boolean   @default(false)
+  accuracyScore  Float?
+  vocabularyUsed Json?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scenario Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scenarioId])
+  @@index([userId])
+  @@index([scenarioId])
+}
+
+model ConversationMessage {
+  id          String   @id @default(cuid())
+  userId      String
+  scenarioId  String
+  role        String
+  content     String   @db.Text
+  corrections Json?
+  createdAt   DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scenario Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@index([userId, scenarioId, createdAt])
+}

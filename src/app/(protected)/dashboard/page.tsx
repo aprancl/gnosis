@@ -1,32 +1,28 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import { signOut } from "@/app/(auth)/actions";
-import { setupProfile } from "@/app/(protected)/profile/actions";
+import { currentUser } from "@clerk/nextjs/server";
+import { UserButton } from "@clerk/nextjs";
+import { getOrCreateUser } from "@/server/auth";
 import { getOverallStats, getUserProgress } from "@/lib/progress/tracker";
-import type { Profile, Chapter, Scenario, UserProgress } from "@/types/database";
+import { db } from "@/server/db";
+import { setupProfile } from "@/app/(protected)/profile/actions";
+import { redirect } from "next/navigation";
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string }>;
-}) {
-  const params = await searchParams;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+export default async function DashboardPage() {
+  const clerkUser = await currentUser();
+  if (!clerkUser) redirect("/sign-in");
 
-  // Fetch user profile (select only needed columns)
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("display_name, current_chapter_id")
-    .eq("id", user!.id)
-    .single<Pick<Profile, "display_name" | "current_chapter_id">>();
+  const user = await getOrCreateUser();
+  if (!user) redirect("/sign-in");
 
-  // Determine if this is a new user (no profile or no display name)
-  const isNewUser = !profile;
-  const displayName = profile?.display_name || null;
-  const greeting = displayName || user?.email?.split("@")[0] || "Scholar";
+  const displayName =
+    clerkUser.firstName
+      ? `${clerkUser.firstName}${clerkUser.lastName ? ` ${clerkUser.lastName}` : ""}`
+      : null;
+  const greeting = displayName || clerkUser.emailAddresses[0]?.emailAddress?.split("@")[0] || "Scholar";
+
+  // Determine if new user (no current chapter set and no progress)
+  const progressCount = await db.userProgress.count({ where: { userId: user.id } });
+  const isNewUser = !user.currentChapterId && progressCount === 0;
 
   // ── New User Welcome Screen ──────────────────────────────────────────
   if (isNewUser) {
@@ -40,40 +36,18 @@ export default async function DashboardPage({
             Your journey into Koine Greek begins here.
           </p>
 
-          {params.error && (
-            <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-serif text-sm text-red-800">
-              {params.error}
-            </div>
-          )}
-
           <div className="mt-10 rounded-xl border border-blue-200 bg-white p-8 shadow-sm text-left">
             <h2 className="font-serif text-2xl font-semibold text-blue-900 text-center">
-              Set Up Your Profile
+              Ready to Begin?
             </h2>
             <p className="mt-2 font-serif text-sm text-blue-800/60 text-center">
-              How shall the scholars of the agora know you?
+              Welcome, {greeting}. Let&apos;s start your journey through the ancient world.
             </p>
 
-            <form className="mt-6 flex flex-col gap-5">
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="display_name"
-                  className="font-serif text-sm font-medium text-ink"
-                >
-                  Display Name
-                </label>
-                <input
-                  id="display_name"
-                  name="display_name"
-                  type="text"
-                  placeholder="e.g., Alexandros, Sophia, Marcus..."
-                  className="rounded-lg border border-blue-200 bg-blue-50/30 px-4 py-2.5 font-serif text-ink placeholder:text-blue-300 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-
+            <form className="mt-6">
               <button
                 formAction={setupProfile}
-                className="mt-2 rounded-lg bg-blue-700 px-6 py-3 font-serif text-lg font-medium text-white transition-colors hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-2"
+                className="w-full rounded-lg bg-blue-700 px-6 py-3 font-serif text-lg font-medium text-white transition-colors hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-2"
               >
                 Begin Chapter 1
               </button>
@@ -88,21 +62,19 @@ export default async function DashboardPage({
     );
   }
 
-  // ── Fetch real progress data via tracker ─────────────────────────────
+  // ── Fetch real progress data ─────────────────────────────────────────
   const [stats, allProgress] = await Promise.all([
-    getOverallStats(user!.id),
-    getUserProgress(user!.id),
+    getOverallStats(user.id),
+    getUserProgress(user.id),
   ]);
 
-  // Fetch current chapter info if set (select only needed columns)
-  let currentChapter: Pick<Chapter, "id" | "chapter_number" | "title"> | null = null;
-  if (profile?.current_chapter_id) {
-    const { data } = await supabase
-      .from("chapters")
-      .select("id, chapter_number, title")
-      .eq("id", profile.current_chapter_id)
-      .single<Pick<Chapter, "id" | "chapter_number" | "title">>();
-    currentChapter = data;
+  // Fetch current chapter info if set
+  let currentChapter: { id: string; chapterNumber: number; title: string } | null = null;
+  if (user.currentChapterId) {
+    currentChapter = await db.chapter.findUnique({
+      where: { id: user.currentChapterId },
+      select: { id: true, chapterNumber: true, title: true },
+    });
   }
 
   // Build recent completed scenarios from progress data (last 5)
@@ -110,19 +82,17 @@ export default async function DashboardPage({
     .filter((p) => p.completed)
     .slice(0, 5);
 
-  let recentScenarios: (UserProgress & { scenario?: Scenario })[] = [];
+  let recentScenarios: Array<typeof allProgress[number] & { scenario?: { id: string; title: string } }> = [];
   if (recentCompleted.length > 0) {
-    const scenarioIds = recentCompleted.map((p) => p.scenario_id);
-    const { data: scenarios } = await supabase
-      .from("scenarios")
-      .select("id, title")
-      .in("id", scenarioIds);
+    const scenarioIds = recentCompleted.map((p) => p.scenarioId);
+    const scenarios = await db.scenario.findMany({
+      where: { id: { in: scenarioIds } },
+      select: { id: true, title: true },
+    });
 
     recentScenarios = recentCompleted.map((p) => ({
       ...p,
-      scenario: (scenarios as Scenario[] | null)?.find(
-        (s) => s.id === p.scenario_id
-      ),
+      scenario: scenarios.find((s) => s.id === p.scenarioId),
     }));
   }
 
@@ -140,16 +110,9 @@ export default async function DashboardPage({
               href="/profile"
               className="font-serif text-sm text-blue-800/60 hover:text-blue-700 transition-colors"
             >
-              {displayName || user?.email}
+              {displayName || clerkUser.emailAddresses[0]?.emailAddress}
             </Link>
-            <form>
-              <button
-                formAction={signOut}
-                className="rounded-lg border border-blue-200 bg-white px-4 py-2 font-serif text-sm text-blue-700 transition-colors hover:bg-blue-50"
-              >
-                Sign Out
-              </button>
-            </form>
+            <UserButton />
           </div>
         </div>
       </header>
@@ -168,7 +131,6 @@ export default async function DashboardPage({
 
         {/* Stats and progress */}
         <div className="grid gap-6 sm:grid-cols-4 mb-10">
-          {/* Progress card */}
           <div className="rounded-xl border border-blue-200 bg-white p-6 shadow-sm">
             <p className="font-serif text-sm font-medium text-blue-800/60 uppercase tracking-wide">
               Scenarios Completed
@@ -183,14 +145,13 @@ export default async function DashboardPage({
             </p>
           </div>
 
-          {/* Current chapter card */}
           <div className="rounded-xl border border-blue-200 bg-white p-6 shadow-sm">
             <p className="font-serif text-sm font-medium text-blue-800/60 uppercase tracking-wide">
               Current Chapter
             </p>
             {currentChapter ? (
               <p className="mt-2 font-serif text-lg font-semibold text-blue-900">
-                Ch. {currentChapter.chapter_number}: {currentChapter.title}
+                Ch. {currentChapter.chapterNumber}: {currentChapter.title}
               </p>
             ) : (
               <p className="mt-2 font-serif text-lg text-blue-800/40">
@@ -199,7 +160,6 @@ export default async function DashboardPage({
             )}
           </div>
 
-          {/* Streak card */}
           <div className="rounded-xl border border-blue-200 bg-white p-6 shadow-sm">
             <p className="font-serif text-sm font-medium text-blue-800/60 uppercase tracking-wide">
               Streak
@@ -212,7 +172,6 @@ export default async function DashboardPage({
             </p>
           </div>
 
-          {/* Vocabulary card */}
           <div className="rounded-xl border border-blue-200 bg-white p-6 shadow-sm">
             <p className="font-serif text-sm font-medium text-blue-800/60 uppercase tracking-wide">
               Vocabulary
@@ -228,7 +187,6 @@ export default async function DashboardPage({
 
         {/* Quick actions */}
         <div className="grid gap-6 sm:grid-cols-2 mb-10">
-          {/* Continue learning */}
           <Link
             href={currentChapter ? `/chapters/${currentChapter.id}` : "/chapters"}
             className="group rounded-xl border border-blue-200 bg-white p-6 shadow-sm transition-all hover:border-blue-400 hover:shadow-md"
@@ -238,7 +196,7 @@ export default async function DashboardPage({
             </h3>
             <p className="mt-2 font-serif text-sm text-blue-800/60">
               {currentChapter
-                ? `Pick up where you left off in Chapter ${currentChapter.chapter_number}.`
+                ? `Pick up where you left off in Chapter ${currentChapter.chapterNumber}.`
                 : "Begin your journey with Chapter 1."}
             </p>
             <span className="mt-4 inline-block font-serif text-sm font-medium text-blue-700 group-hover:text-blue-900">
@@ -246,7 +204,6 @@ export default async function DashboardPage({
             </span>
           </Link>
 
-          {/* Browse chapters */}
           <Link
             href="/chapters"
             className="group rounded-xl border border-blue-200 bg-white p-6 shadow-sm transition-all hover:border-blue-400 hover:shadow-md"
@@ -303,10 +260,10 @@ export default async function DashboardPage({
                     <p className="font-serif text-sm font-semibold text-blue-900">
                       {item.scenario?.title ?? "Scenario"}
                     </p>
-                    {item.completed_at && (
+                    {item.completedAt && (
                       <p className="font-serif text-xs text-blue-800/40">
                         Completed{" "}
-                        {new Date(item.completed_at).toLocaleDateString(
+                        {new Date(item.completedAt).toLocaleDateString(
                           "en-US",
                           {
                             month: "short",
@@ -317,9 +274,9 @@ export default async function DashboardPage({
                       </p>
                     )}
                   </div>
-                  {item.accuracy_score !== null && (
+                  {item.accuracyScore !== null && (
                     <span className="rounded-full bg-blue-50 px-3 py-1 font-serif text-xs font-medium text-blue-700">
-                      {Math.round(item.accuracy_score * 100)}%
+                      {Math.round(item.accuracyScore * 100)}%
                     </span>
                   )}
                 </div>

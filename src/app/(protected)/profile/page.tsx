@@ -1,25 +1,34 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import { signOut } from "@/app/(auth)/actions";
-import { updateProfile } from "./actions";
+import { currentUser } from "@clerk/nextjs/server";
+import { UserButton } from "@clerk/nextjs";
+import { getOrCreateUser } from "@/server/auth";
+import { db } from "@/server/db";
+import { redirect } from "next/navigation";
 
-export default async function ProfilePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string; message?: string }>;
-}) {
-  const params = await searchParams;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+export default async function ProfilePage() {
+  const clerkUser = await currentUser();
+  if (!clerkUser) redirect("/sign-in");
 
-  // Fetch the profile (select only needed columns)
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("display_name")
-    .eq("id", user!.id)
-    .single();
+  const user = await getOrCreateUser();
+  if (!user) redirect("/sign-in");
+
+  // Get current chapter info if set
+  let currentChapterTitle: string | null = null;
+  if (user.currentChapterId) {
+    const chapter = await db.chapter.findUnique({
+      where: { id: user.currentChapterId },
+      select: { chapterNumber: true, title: true },
+    });
+    if (chapter) {
+      currentChapterTitle = `Ch. ${chapter.chapterNumber}: ${chapter.title}`;
+    }
+  }
+
+  const displayName =
+    clerkUser.firstName
+      ? `${clerkUser.firstName}${clerkUser.lastName ? ` ${clerkUser.lastName}` : ""}`
+      : null;
+  const email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
 
   return (
     <div className="flex min-h-screen flex-col bg-parchment">
@@ -33,16 +42,9 @@ export default async function ProfilePage({
           </Link>
           <div className="flex items-center gap-4">
             <span className="font-serif text-sm text-blue-800/60">
-              {profile?.display_name || user?.email}
+              {displayName || email}
             </span>
-            <form>
-              <button
-                formAction={signOut}
-                className="rounded-lg border border-blue-200 bg-white px-4 py-2 font-serif text-sm text-blue-700 transition-colors hover:bg-blue-50"
-              >
-                Sign Out
-              </button>
-            </form>
+            <UserButton />
           </div>
         </div>
       </header>
@@ -58,70 +60,49 @@ export default async function ProfilePage({
         </Link>
 
         <h2 className="mt-4 font-serif text-3xl font-bold text-blue-900">
-          Profile Settings
+          Profile
         </h2>
         <p className="mt-2 font-serif text-blue-800/60">
-          Customize how you appear in the agora.
+          Your account information.
         </p>
 
-        {/* Messages */}
-        {params.error && (
-          <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-serif text-sm text-red-800">
-            {params.error}
-          </div>
-        )}
-        {params.message && (
-          <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 font-serif text-sm text-blue-800">
-            {params.message}
-          </div>
-        )}
-
-        {/* Profile form */}
+        {/* Profile info */}
         <div className="mt-8 rounded-xl border border-blue-200 bg-white p-8 shadow-sm">
-          <form className="flex flex-col gap-6">
+          <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="email"
-                className="font-serif text-sm font-medium text-ink"
-              >
+              <label className="font-serif text-sm font-medium text-ink">
                 Email
               </label>
-              <input
-                id="email"
-                type="email"
-                value={user?.email ?? ""}
-                disabled
-                className="rounded-lg border border-blue-100 bg-blue-50/30 px-4 py-2.5 font-serif text-ink/50 cursor-not-allowed"
-              />
+              <p className="rounded-lg border border-blue-100 bg-blue-50/30 px-4 py-2.5 font-serif text-ink/50">
+                {email}
+              </p>
               <p className="font-serif text-xs text-blue-800/40">
-                Email cannot be changed here.
+                Managed by your authentication provider.
               </p>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="display_name"
-                className="font-serif text-sm font-medium text-ink"
-              >
-                Display Name
-              </label>
-              <input
-                id="display_name"
-                name="display_name"
-                type="text"
-                defaultValue={profile?.display_name ?? ""}
-                placeholder="How shall we address you, Scholar?"
-                className="rounded-lg border border-blue-200 bg-blue-50/30 px-4 py-2.5 font-serif text-ink placeholder:text-blue-300 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              />
-            </div>
+            {displayName && (
+              <div className="flex flex-col gap-1.5">
+                <label className="font-serif text-sm font-medium text-ink">
+                  Display Name
+                </label>
+                <p className="rounded-lg border border-blue-100 bg-blue-50/30 px-4 py-2.5 font-serif text-ink">
+                  {displayName}
+                </p>
+              </div>
+            )}
 
-            <button
-              formAction={updateProfile}
-              className="mt-2 self-start rounded-lg bg-blue-700 px-6 py-3 font-serif text-lg font-medium text-white transition-colors hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-2"
-            >
-              Save Changes
-            </button>
-          </form>
+            {currentChapterTitle && (
+              <div className="flex flex-col gap-1.5">
+                <label className="font-serif text-sm font-medium text-ink">
+                  Current Chapter
+                </label>
+                <p className="rounded-lg border border-blue-100 bg-blue-50/30 px-4 py-2.5 font-serif text-ink">
+                  {currentChapterTitle}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Account info */}
@@ -135,19 +116,11 @@ export default async function ProfilePage({
                 Member since
               </dt>
               <dd className="font-serif text-sm text-ink">
-                {user?.created_at
-                  ? new Date(user.created_at).toLocaleDateString("en-US", {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })
-                  : "Unknown"}
-              </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="font-serif text-sm text-blue-800/60">User ID</dt>
-              <dd className="font-mono text-xs text-blue-800/40">
-                {user?.id}
+                {new Date(user.createdAt).toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })}
               </dd>
             </div>
           </dl>

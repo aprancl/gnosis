@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getOrCreateUser } from "@/server/auth";
 import {
   getConversationHistory,
   clearConversation,
@@ -16,15 +16,11 @@ interface RouteParams {
  * GET /api/conversations/[scenarioId]
  *
  * Retrieve conversation history for the authenticated user and the given scenario.
- * Returns messages ordered by created_at ascending.
  */
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const { scenarioId } = await params;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getOrCreateUser();
 
   if (!user) {
     return NextResponse.json(
@@ -49,15 +45,11 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
  * DELETE /api/conversations/[scenarioId]
  *
  * Clear all conversation history for the authenticated user and the given scenario.
- * Used when a user wants to replay a scenario from scratch.
  */
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   const { scenarioId } = await params;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getOrCreateUser();
 
   if (!user) {
     return NextResponse.json(

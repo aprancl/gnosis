@@ -2,59 +2,31 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-
-export async function updateProfile(formData: FormData) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/sign-in");
-  }
-
-  const displayName = (formData.get("display_name") as string)?.trim() || null;
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({ display_name: displayName })
-    .eq("id", user.id);
-
-  if (error) {
-    redirect(`/profile?error=${encodeURIComponent(error.message)}`);
-  }
-
-  revalidatePath("/", "layout");
-  redirect("/profile?message=Profile updated successfully.");
-}
+import { getOrCreateUser } from "@/server/auth";
+import { db } from "@/server/db";
 
 /**
  * Server action for the new-user welcome flow.
- * Sets display name and redirects to dashboard.
+ * Sets the user's current chapter to Chapter 1 and redirects to dashboard.
  */
-export async function setupProfile(formData: FormData) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+export async function setupProfile() {
+  const user = await getOrCreateUser();
 
   if (!user) {
     redirect("/sign-in");
   }
 
-  const displayName = (formData.get("display_name") as string)?.trim() || null;
+  // Find Chapter 1
+  const chapter1 = await db.chapter.findFirst({
+    where: { chapterNumber: 1 },
+    select: { id: true },
+  });
 
-  // Upsert the profile - handles both new and existing profiles
-  const { error } = await supabase
-    .from("profiles")
-    .upsert({
-      id: user.id,
-      display_name: displayName,
+  if (chapter1) {
+    await db.user.update({
+      where: { id: user.id },
+      data: { currentChapterId: chapter1.id },
     });
-
-  if (error) {
-    redirect(`/dashboard?error=${encodeURIComponent(error.message)}`);
   }
 
   revalidatePath("/", "layout");

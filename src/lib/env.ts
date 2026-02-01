@@ -20,8 +20,11 @@ function getOptionalEnvVar(name: string, defaultValue: string): string {
 
 /** Server-side only environment variables */
 export const serverEnv = {
-  get SUPABASE_SERVICE_ROLE_KEY() {
-    return getRequiredEnvVar("SUPABASE_SERVICE_ROLE_KEY");
+  get CLERK_SECRET_KEY() {
+    return getRequiredEnvVar("CLERK_SECRET_KEY");
+  },
+  get DATABASE_URL() {
+    return getRequiredEnvVar("DATABASE_URL");
   },
   get GROQ_API_KEY() {
     return getRequiredEnvVar("GROQ_API_KEY");
@@ -33,10 +36,7 @@ export const serverEnv = {
 
 /** Client-safe environment variables (NEXT_PUBLIC_ prefix) */
 export const clientEnv = {
-  get SUPABASE_URL() {
-    return getRequiredEnvVar("NEXT_PUBLIC_SUPABASE_URL");
-  },
-  get SUPABASE_ANON_KEY() {
-    return getRequiredEnvVar("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  get CLERK_PUBLISHABLE_KEY() {
+    return getRequiredEnvVar("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
   },
 };
