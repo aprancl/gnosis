@@ -2,14 +2,13 @@
 -- Creates core tables: profiles, chapters, scenarios, user_progress, conversation_messages
 -- Includes RLS policies and indexes for common query patterns.
 
--- Enable UUID generation
-create extension if not exists "uuid-ossp";
+-- gen_random_uuid() is available natively in Postgres 13+
 
 -- =============================================================================
 -- 1. chapters
 -- =============================================================================
 create table public.chapters (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   chapter_number integer not null unique,
   title text not null,
   description text not null,
@@ -37,7 +36,7 @@ comment on table public.profiles is 'Extended user profile linked to Supabase au
 -- 3. scenarios (depends on chapters)
 -- =============================================================================
 create table public.scenarios (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   chapter_id uuid not null references public.chapters on delete cascade,
   scenario_number integer not null,
   title text not null,
@@ -56,7 +55,7 @@ comment on table public.scenarios is 'Individual conversation scenarios within a
 -- 4. user_progress (depends on scenarios)
 -- =============================================================================
 create table public.user_progress (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users on delete cascade,
   scenario_id uuid not null references public.scenarios on delete cascade,
   completed boolean not null default false,
@@ -74,7 +73,7 @@ comment on table public.user_progress is 'Tracks user completion and performance
 -- 5. conversation_messages (depends on scenarios)
 -- =============================================================================
 create table public.conversation_messages (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users on delete cascade,
   scenario_id uuid not null references public.scenarios on delete cascade,
   role text not null check (role in ('user', 'assistant')),
