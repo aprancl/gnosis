@@ -6,7 +6,7 @@ import { clientEnv } from "@/lib/env";
  * Public routes that don't require authentication.
  * Auth routes are also public but get special handling (redirect if already logged in).
  */
-const publicRoutes = ["/", "/sign-in", "/sign-up"];
+const publicRoutes = ["/", "/sign-in", "/sign-up", "/api/auth/callback"];
 const authRoutes = ["/sign-in", "/sign-up"];
 
 /**
