@@ -261,6 +261,14 @@ A typical session: The user logs in, selects their current chapter, reads the sc
 - High contrast mode for Greek text readability
 - Greek text rendered in a clear, readable font with appropriate sizing
 
+### 6.5 Visual Design
+
+- **Color palette**: White and blue as primary colors, evoking classical Mediterranean aesthetics
+- **Typography**: Serif fonts (Times New Roman or similar classical serif) for body text and Greek passages; convey an ancient, scholarly feel
+- **Aesthetic**: Old-world / antiquity-inspired design -- the user should feel immersed in ancient times
+- **UI elements**: Classical styling cues (borders, ornamental details, parchment-like textures where appropriate)
+- **Greek text**: Displayed in a serif font optimized for Greek characters with generous sizing for readability
+
 ## 7. Technical Considerations
 
 ### 7.1 Architecture Overview
