@@ -36,6 +36,12 @@ yarn-error.log*
 # vercel
 .vercel
 
+# training data (WAV files, MP3s — too large for git)
+/data/
+
+# claude code execution logs
+.claude/exec-*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
