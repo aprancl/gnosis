@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 import type { ChatMessage as ChatMessageType } from "@/types/chat";
 import type { Correction } from "@/types/corrections";
 import { parseCorrections } from "@/lib/corrections/parser";
-import SpeakButton from "./SpeakButton";
+import AudioControls from "./AudioControls";
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -88,7 +88,7 @@ export default function ChatMessage({
 
         {/* TTS button for completed assistant messages */}
         {!isUser && !isStreaming && message.content && (
-          <SpeakButton text={message.content} />
+          <AudioControls text={message.content} />
         )}
       </div>
     </div>

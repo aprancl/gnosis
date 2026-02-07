@@ -50,6 +50,8 @@ export interface UseVoiceModeReturn {
   isSpeaking: boolean;
   /** Speak text aloud (for auto-playing responses) */
   speak: (text: string) => void;
+  /** Stream text chunks to TTS for low-latency playback */
+  speakStream: (chunks: AsyncIterable<string>) => Promise<void>;
   /** Stop TTS playback */
   stopSpeaking: () => void;
   /** Unavailability reason message (if voice mode cannot be used) */
@@ -102,7 +104,7 @@ export function useVoiceMode(
   let voiceState: VoiceModeState = "idle";
   if (tts.isSpeaking) {
     voiceState = "speaking";
-  } else if (isProcessing) {
+  } else if (tts.isLoading || isProcessing) {
     voiceState = "processing";
   } else if (stt.isListening) {
     voiceState = "listening";
@@ -148,6 +150,7 @@ export function useVoiceMode(
     sttError: stt.error,
     isSpeaking: tts.isSpeaking,
     speak: tts.speak,
+    speakStream: tts.speakStream,
     stopSpeaking: tts.stop,
     unavailableReason,
   };

@@ -107,6 +107,19 @@ export default function ChatInterface({ scenario, isReplay = false }: ChatInterf
   // Track the latest assistant message index for auto-TTS
   const lastSpokenIndexRef = useRef(-1);
 
+  // Ref for streaming text chunk emitter (used for streaming TTS in voice mode)
+  // When set, text chunks from the streaming response are pushed here
+  const streamChunkResolverRef = useRef<((chunk: string) => void) | null>(null);
+  const streamEndResolverRef = useRef<(() => void) | null>(null);
+  // Track whether streaming TTS was used for the current response
+  const streamTTSActiveRef = useRef(false);
+
+  // Refs for voice mode state accessed inside sendMessage
+  // (voiceMode is declared after sendMessage, so we use refs for live values)
+  const voiceModeActiveRef = useRef(false);
+  const voiceTtsSupportedRef = useRef(false);
+  const speakStreamRef = useRef<((chunks: AsyncIterable<string>) => Promise<void>) | null>(null);
+
   // Detect if the latest assistant message includes a language reminder
   const latestAssistantContent = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -205,6 +218,56 @@ export default function ChatInterface({ scenario, isReplay = false }: ChatInterf
           throw new Error("No response body received");
         }
 
+        // Start streaming TTS if voice mode is active
+        streamTTSActiveRef.current = false;
+        if (voiceModeActiveRef.current && voiceTtsSupportedRef.current && speakStreamRef.current) {
+          streamTTSActiveRef.current = true;
+
+          // Create an async iterable that yields text chunks as they arrive
+          const chunkQueue: string[] = [];
+          let resolveWait: (() => void) | null = null;
+          let streamDone = false;
+
+          streamChunkResolverRef.current = (chunk: string) => {
+            chunkQueue.push(chunk);
+            if (resolveWait) {
+              resolveWait();
+              resolveWait = null;
+            }
+          };
+
+          streamEndResolverRef.current = () => {
+            streamDone = true;
+            if (resolveWait) {
+              resolveWait();
+              resolveWait = null;
+            }
+          };
+
+          const textChunkIterable: AsyncIterable<string> = {
+            [Symbol.asyncIterator]() {
+              return {
+                async next(): Promise<IteratorResult<string>> {
+                  while (chunkQueue.length === 0 && !streamDone) {
+                    await new Promise<void>((resolve) => {
+                      resolveWait = resolve;
+                    });
+                  }
+                  if (chunkQueue.length > 0) {
+                    return { value: chunkQueue.shift()!, done: false };
+                  }
+                  return { value: undefined as unknown as string, done: true };
+                },
+              };
+            },
+          };
+
+          // Fire and forget -- speakStream will run in parallel with the streaming loop
+          speakStreamRef.current!(textChunkIterable).catch((err: unknown) => {
+            console.warn("[ChatInterface] Streaming TTS error:", err);
+          });
+        }
+
         // Read the stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -217,6 +280,18 @@ export default function ChatInterface({ scenario, isReplay = false }: ChatInterf
           const chunk = decoder.decode(value, { stream: true });
           accumulated += chunk;
           setStreamingContent(accumulated);
+
+          // Push chunk to streaming TTS if active
+          if (streamChunkResolverRef.current) {
+            streamChunkResolverRef.current(chunk);
+          }
+        }
+
+        // Signal end of text stream to TTS
+        if (streamEndResolverRef.current) {
+          streamEndResolverRef.current();
+          streamChunkResolverRef.current = null;
+          streamEndResolverRef.current = null;
         }
 
         // Parse completion metadata from the stream
@@ -259,7 +334,13 @@ export default function ChatInterface({ scenario, isReplay = false }: ChatInterf
     isProcessing: isLoading,
   });
 
-  // Auto-play TTS for new assistant messages when voice mode is active
+  // Keep refs in sync with voiceMode for use inside sendMessage
+  voiceModeActiveRef.current = voiceMode.isVoiceModeActive;
+  voiceTtsSupportedRef.current = voiceMode.ttsSupported;
+  speakStreamRef.current = voiceMode.speakStream;
+
+  // Auto-play TTS for new assistant messages when voice mode is active.
+  // If streaming TTS already handled this message, skip the non-streaming fallback.
   useEffect(() => {
     if (!voiceMode.isVoiceModeActive || !voiceMode.ttsSupported) return;
     if (messages.length === 0) return;
@@ -274,6 +355,13 @@ export default function ChatInterface({ scenario, isReplay = false }: ChatInterf
       !isLoading
     ) {
       lastSpokenIndexRef.current = lastIndex;
+
+      // If streaming TTS was active for this response, it already handled playback
+      if (streamTTSActiveRef.current) {
+        streamTTSActiveRef.current = false;
+        return;
+      }
+
       voiceMode.speak(lastMessage.content);
     }
   }, [messages, voiceMode, isLoading]);
